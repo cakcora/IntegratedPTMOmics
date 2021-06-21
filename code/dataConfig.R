@@ -1,7 +1,7 @@
 
 
 dataDir = "C:/Code/IntegratedPTMOmics/data/"
-
+workingDir="C:/Code/IntegratedPTMOmics/"
 #Pathway file comes from BioPlanet
 pathwayFile = paste0(dataDir,"bioplanet_pathway.csv")
 bioPlanetsRdata<-paste0(dataDir,"BioPlanetNetworks.RData")
@@ -19,3 +19,5 @@ subcellularSimFile =paste0(dataDir,"GO_Cellular_Component_2018.txt")
 molecularSimFile = paste0(dataDir,"GO_Molecular_Function_2018.txt")
 proDomainSimFile = paste0(dataDir,"InterPro_Domains_2019.txt")
 bioProcessSimFile =paste0(dataDir, "GO_Biological_Process_2018.txt")
+
+PPIdata<-load("C:/Users/etr/Dropbox/Academic/Manitoba/Biological networks/data/GZ_PPI_Networks2.RData") 

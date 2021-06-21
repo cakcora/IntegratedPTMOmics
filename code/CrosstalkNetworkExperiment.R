@@ -1,8 +1,9 @@
-#library(data.table)
-#library(plyr)
-#library(tidyverse)
-#library(igraph)
+library(data.table)
+library(plyr)
+library(dplyr)
+library(igraph)
 library(lsa)
+library(ggplot2)
 
 # Learn where data files are stored.
 source("code/dataConfig.R")
@@ -10,10 +11,8 @@ source("code/dataConfig.R")
 source("code/utilityFunctions.R")
 # We compute similarity of two pathways by using different gene similarity measures
  
-simFiles  = c(bioProcessSimFile,
-              molecularSimFile,
-              proDomainSimFile,
-              subcellularSimFile
+simFiles  = c(proDomainSimFile,
+              subcellularSimFile,molecularSimFile,bioProcessSimFile
 )
 
 
@@ -51,8 +50,8 @@ geneSim <- function(similaritySourceFile, testing = FALSE) {
   # we will create a new 1-to-1 mapping gene->pathway
   # TRhis code snippet takes too much time.
   newDat <- data.frame(gene = NA, pathway = NA)
-  pathwayColumn <- numeric()
-  geneColumn <- numeric()
+  pathwayColumn <- numeric(length=nrow(pathwayId))
+  geneColumn <- numeric(length=nrow(pathwayId))
   i <- 0
   for (row in 1:nrow(pathwayId)) {
     thisPathway <- pathwayId[row, "id"]
@@ -65,7 +64,7 @@ geneSim <- function(similaritySourceFile, testing = FALSE) {
   newDat <- data.frame(geneColumn, pathwayColumn, stringsAsFactors = FALSE)
   colnames(newDat) <- c("gene", "pathway")
   # we will cache all pathways of a gene in a map to speed up future comps. 
-  pathwaysOfGenes <- list()
+  pathwaysOfGenes <- list(length=numberOfGenes)
   for (currentGene1 in 1:numberOfGenes) {
     pathwaysOfGenes[[currentGene1]] <- newDat[newDat$gene == currentGene1,]$pathway
   }
@@ -111,13 +110,13 @@ geneSim <- function(similaritySourceFile, testing = FALSE) {
 }
 
 
-loadSim<-function(workingDir,similaritySourceFile){
+loadSim<-function(dataDir,similaritySourceFile){
   message(similaritySourceFile, " is being processed to create gene similarity values.")
   fname=gsub("[^[:alnum:][:space:]]","",similaritySourceFile)
 
   subDir <- "simcache"
-  ifelse(!dir.exists(file.path(workingDir, subDir)), dir.create(file.path(workingDir, subDir)), FALSE)
-  resFile <-  paste0(workingDir,"simcache/","geneSim",
+  ifelse(!dir.exists(file.path(dataDir, subDir)), dir.create(file.path(dataDir, subDir)), FALSE)
+  resFile <-  paste0(dataDir,"simcache/","geneSim",
                     fname,
                     ".rds"
   )
@@ -140,14 +139,15 @@ loadSim<-function(workingDir,similaritySourceFile){
 useIdenticalGenes = F
 pathways = read.csv(pathwayFile)
 load(bioPlanetsRdata)
+
 for(nearestNeighborCount in c(5,10,20,50,100,200)){
   results<-data.frame()
   
   for(simFile in simFiles){
-    geneSimMap = as.data.table(loadSim(workingDir,simFile))
+    geneSimMap = as.data.table(loadSim(dataDir,simFile))
     colnames(geneSimMap)<-c("gene1","gene2","similarity")
   
-    
+    message("Similarity reference file: ",simFile,", k-neighbor:",nearestNeighborCount)
    
     for(graphIndex in 1:length(pathway.net.list)){
       gr=graph_from_edgelist(as.matrix(pathway.net.list[[graphIndex]][,c("source","target")]))
@@ -155,7 +155,7 @@ for(nearestNeighborCount in c(5,10,20,50,100,200)){
       # How do we know that this specific crosstalk pathway network is any good?
       # We can quantify edge similarity. If two pathways are connected, 
       # we can compute their similarity by taking the average similarity of their genes.
-      # 1st assumption: edges between highly similar pathways are good
+      # assumption: edges between highly similar pathways are good
       sumOfAllPathwaySim=0.0
       simBagAll<-c()
       
@@ -167,7 +167,7 @@ for(nearestNeighborCount in c(5,10,20,50,100,200)){
         df20<-geneSimMap[geneSimMap$gene2%in%pathway1Genes,]
         simBag<-c()
         for (pathway2Name in neList){
-          # strange: Bioplanet has gene symbols that are 9818 Levels: 1-Dec 1-Sep 2-Sep 4-Sep 5-Sep 6-Mar 7-Sep 9-Sep A1BG A1CF A2M ... ZYX
+          # todo: Bioplanet has gene symbols that are 9818 Levels: 1-Dec 1-Sep 2-Sep 4-Sep 5-Sep 6-Mar 7-Sep 9-Sep A1BG A1CF A2M ... ZYX
           pathway2Genes = as.character(pathways[pathways$PATHWAY_NAME==pathway2Name,]$GENE_SYMBOL)
           df1<-df10[df10$gene2%in%pathway2Genes,]
           df2<-df20[df20$gene1%in%pathway2Genes,]
@@ -198,7 +198,7 @@ for(nearestNeighborCount in c(5,10,20,50,100,200)){
       }
       avgGraphSimBag = sum(simBagAll)/length(V(gr))
       x=c(graph=graphIndex,avgNSim=avgGraphSimBag,gorder=gorder(gr),gsize=gsize(gr),simFile=simFile)
-      message(graphIndex," ",avgGraphSimBag)
+      message("\tGraph id: ",graphIndex," Average Pathway Similarity: ",avgGraphSimBag)
       results= bind_rows(results,x)
     }   
   }
@@ -209,10 +209,12 @@ for(nearestNeighborCount in c(5,10,20,50,100,200)){
   ifelse(!dir.exists(file.path(workingDir, subDir)), dir.create(file.path(workingDir, subDir)), FALSE)
   fname=paste0("results",nearestNeighborCount,fname,".rds")
   resFile <-  paste0(workingDir,subDir,"/",fname)
+  saveRDS(results,
+          file = resFile)
 }
 
 for(simFile in simFiles){
-  geneSimMap = as.data.table(loadSim(workingDir,simFile));
+  geneSimMap = as.data.table(loadSim(dataDir,simFile));
   colnames(geneSimMap)<-c("gene1","gene2","similarity"); 
   plot2<-ggplot(data = geneSimMap,aes(x=similarity))+  
     geom_histogram (binwidth = 0.05, color = "white") +
@@ -228,9 +230,10 @@ for(simFile in simFiles){
 }
 
 for( nearestNeighborCount in c(5,10,20,50,100,200)){
-  results2<-readRDS(file=paste0("results/",nearestNeighborCount,"results.RDS"))
+  fname=gsub("[^[:alnum:][:space:]]","",simFile)
+  results2<-readRDS(file=paste0(workingDir,"results/","results",nearestNeighborCount,fname,".RDS"))
   results2$graph<-as.numeric(results2$graph)
-  results2$simFile<-substring(as.character(results2$simFile),first=0,21)
+  results2$simFile<-fname
   results2$avgSim<-round(as.numeric(results2$avgNSim),3)
   p1<-ggplot(data=results2,aes(x=graph,y=avgSim,group=simFile,color=simFile))+geom_line(size=1.3)+
     ggtitle(paste0(nearestNeighborCount,"-NN average graph similarity")) +theme(legend.position = c(0.2,0.9));p1

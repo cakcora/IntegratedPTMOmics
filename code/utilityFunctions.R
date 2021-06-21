@@ -25,3 +25,34 @@ cosineSim <- function(vec1, vec2) {
    
    return(result)
 }
+
+
+showVenn<-function(v1,v2,v3){
+   venn.plot<-venn.diagram(main=v3,
+                           x = list(v1, v2),
+                           category.names = c("Gzallt" , "ldgene"),
+                           filename = NULL,
+                           height = 480 , 
+                           width = 480 , 
+                           resolution = 3000,
+                           compression = "lzw",
+                           lwd = 1,
+                           col=c("gray", 'lightblue'),
+                           fill = c("red","blue"))
+   grid.draw(venn.plot) 
+}
+CorenessLayout <- function(g) {
+   coreness <- graph.coreness(g);
+   xy <- array(NA, dim=c(length(coreness), 2));
+   
+   shells <- sort(unique(coreness));
+   for(shell in shells) {
+      v <- 1 - ((shell-1) / max(shells));
+      nodes_in_shell <- sum(coreness==shell);
+      angles <- seq(0,360,(360/nodes_in_shell));
+      angles <- angles[-length(angles)]; # remove last element
+      xy[coreness==shell, 1] <- sin(angles) * v;
+      xy[coreness==shell, 2] <- cos(angles) * v;
+   }
+   return(xy);
+}
