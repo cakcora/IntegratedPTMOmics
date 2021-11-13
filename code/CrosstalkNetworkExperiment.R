@@ -4,13 +4,15 @@ library(dplyr)
 library(igraph)
 library(lsa)
 library(ggplot2)
-
+library(tidyr)
+library(corrr)
+rm(list = ls())
 # Learn where data files are stored.
 source("code/dataConfig.R")
 #load utility functions
 source("code/utilityFunctions.R")
 # We compute similarity of two pathways by using different gene similarity measures
- 
+
 simFiles  = c(proDomainSimFile,
               subcellularSimFile,molecularSimFile,bioProcessSimFile
 )
@@ -83,7 +85,7 @@ geneSim <- function(similaritySourceFile, testing = FALSE) {
       }
     }
   }
-     
+  
   # we now start computing the pairwise similarities of genes
   geneColumn1 <- character()
   geneColumn2 <- character()
@@ -113,12 +115,12 @@ geneSim <- function(similaritySourceFile, testing = FALSE) {
 loadSim<-function(dataDir,similaritySourceFile){
   message(similaritySourceFile, " is being processed to create gene similarity values.")
   fname=gsub("[^[:alnum:][:space:]]","",similaritySourceFile)
-
+  
   subDir <- "simcache"
   ifelse(!dir.exists(file.path(dataDir, subDir)), dir.create(file.path(dataDir, subDir)), FALSE)
   resFile <-  paste0(dataDir,"simcache/","geneSim",
-                    fname,
-                    ".rds"
+                     fname,
+                     ".rds"
   )
   result = ""
   tryCatch({
@@ -146,9 +148,9 @@ for(nearestNeighborCount in c(5,10,20,50,100,200)){
   for(simFile in simFiles){
     geneSimMap = as.data.table(loadSim(dataDir,simFile))
     colnames(geneSimMap)<-c("gene1","gene2","similarity")
-  
+    
     message("Similarity reference file: ",simFile,", k-neighbor:",nearestNeighborCount)
-   
+    
     for(graphIndex in 1:length(pathway.net.list)){
       gr=graph_from_edgelist(as.matrix(pathway.net.list[[graphIndex]][,c("source","target")]))
       # graph is here. 
@@ -229,18 +231,146 @@ for(simFile in simFiles){
   ggsave(filename =resFile,plot=plot2,width=10,unit="cm")
 }
 
-for( nearestNeighborCount in c(5,10,20,50,100,200)){
+for( nearestNeighborCount in c(5,10,20,50)){
   fname=gsub("[^[:alnum:][:space:]]","",simFile)
   results2<-readRDS(file=paste0(workingDir,"results/","results",nearestNeighborCount,fname,".RDS"))
   results2$graph<-as.numeric(results2$graph)
-  results2$simFile<-fname
-  results2$avgSim<-round(as.numeric(results2$avgNSim),3)
-  p1<-ggplot(data=results2,aes(x=graph,y=avgSim,group=simFile,color=simFile))+geom_line(size=1.3)+
-    ggtitle(paste0(nearestNeighborCount,"-NN average graph similarity")) +theme(legend.position = c(0.2,0.9));p1
-  ggsave(filename = paste(nearestNeighborCount,"sim.png",sep=""),plot=p1,width=20,height=15,unit="cm",path=paste0(workingDir,"results/"))
+  results2$avgNSim<-round(as.numeric(results2$avgNSim),3)
+  
+  # a simnple hack for better file names in the legend
+  results2$simFile=substr(results2$simFile,33,53)
+  
+  
+  p1<-ggplot(data=results2,aes(x=graph,y=avgNSim,group=simFile,color=simFile))+geom_line(size=1.3)+
+    ggtitle(paste0(nearestNeighborCount,"-NN average pathway-pathway similarity in graphs")) +
+    scale_y_continuous(name="similarity")+ scale_x_continuous(name="graph id")+
+    theme_bw()+theme(axis.line = element_line(colour = "black"),
+                     panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+                     panel.border = element_blank(),panel.background = element_blank())+
+    theme(legend.position = c(0.2,0.9));p1
+  ggsave(filename = paste(nearestNeighborCount,"sim.png",sep=""),plot=p1,width=20,height=15,unit="cm",path=paste0(workingDir,"figures/"))
   
   results2$gorder<-as.numeric(results2$gorder)
   results2$gsize<-as.numeric(results2$gsize)
   ggplot(data=results2,aes(x=graph,y=gorder))+geom_line(size=1) 
   ggplot(data=results2,aes(x=graph,y=gsize))+geom_line(size=1)+scale_y_log10() 
 }
+
+# August 2021 code
+load("data/BioPlanetNetworks.RData")
+simFiles  = c(proDomainSimFile,
+              subcellularSimFile,molecularSimFile,bioProcessSimFile
+)
+for(simFile in simFiles){
+  results<-data.frame()
+  geneSimMap = as.data.table(loadSim(dataDir,simFile))
+  
+  # todo: compute pairwise sim of all
+  gr=graph_from_edgelist(as.matrix(total.pathway.net[,c("source","target")]))
+  # graph is here. 
+  # How do we know that this specific crosstalk pathway network is any good?
+  # We can quantify edge similarity. If two pathways are connected, 
+  # we can compute their similarity by taking the average similarity of their genes.
+  # assumption: edges between highly similar pathways are good
+ 
+  nearestNeighborCount<-30
+  for(pathway1Name in V(gr)$name){
+    pathway1Genes <- pathways[pathways$PATHWAY_NAME==pathway1Name,]$GENE_SYMBOL
+    sumOfPathway1Sim<-0.0
+    neList <- neighbors(gr,pathway1Name)$name
+    df10<-geneSimMap[geneSimMap$geneColumn1%in%pathway1Genes,]
+    df20<-geneSimMap[geneSimMap$geneColumn2%in%pathway1Genes,]
+    for (pathway2Name in neList){
+      pathway2Genes = as.character(pathways[pathways$PATHWAY_NAME==pathway2Name,]$GENE_SYMBOL)
+      df1<-df10[df10$geneColumn2%in%pathway2Genes,]
+      df2<-df20[df20$geneColumn1%in%pathway2Genes,]
+      both = length(intersect(pathway1Genes,pathway2Genes))
+      
+      
+      if(useIdenticalGenes){
+        N2 = nearestNeighborCount-both
+        if(N2>0){
+          sumOfSim = sum(sort(union(df1$simColumn,df2$simColumn),decreasing=T)[1:N2],rm.na=T)
+          avgSimOfPathway1to2 = (both+sumOfSim)/(nearestNeighborCount+both)
+        }else {
+          avgSimOfPathway1to2 = 1.0
+        }
+      }
+      else{
+        avgSimOfPathway1to2 = sum(sort(union(df1$simColumn,df2$simColumn),decreasing=T)[1:nearestNeighborCount],rm.na=T)/nearestNeighborCount
+      }
+      if(is.na(avgSimOfPathway1to2))
+        avgSimOfPathway1to2<-0.0
+      if(avgSimOfPathway1to2>1)avgSimOfPathway1to2=1.0
+      x=c(pw1=pathway1Name,pw2=pathway2Name,sim=avgSimOfPathway1to2,sourceFile=simFile)
+      #message(pathway1Name," ",pathway2Name," ",avgSimOfPathway1to2)
+      results= bind_rows(results,x)
+    }
+  }
+   saveRDS(results,file=paste0(simFile ,"P2PSim.rds"))
+}
+
+#Sept 18 2021
+simFiles  = c(proDomainSimFile,
+              subcellularSimFile,molecularSimFile,bioProcessSimFile
+)
+results<-data.frame()
+for(simFile in simFiles){
+  results<-bind_rows(results,readRDS(file=paste0(simFile ,"P2PSim.rds")))
+}
+nr<-results
+nr$sim<-as.numeric(nr$sim)
+nr$sourceFile<-substr(nr$sourceFile,33,(nchar(nr$sourceFile)-4))
+nr$sourceFile <- gsub('GO_Biological_Process_2018', 'GoBio', nr$sourceFile)
+nr$sourceFile <- gsub('GO_Cellular_Component_2018', 'GoCel', nr$sourceFile)
+nr$sourceFile <- gsub('InterPro_Domains_2019', 'InPro', nr$sourceFile)
+nr$sourceFile <- gsub('GO_Molecular_Function_2018', 'GoMol', nr$sourceFile)
+dataAll<-spread(nr, key = sourceFile, value = sim)
+saveRDS(dataAll,file="P2PSim.rds")
+
+load("data/BioPlanetNetworks.RData")
+dataAll<-readRDS(file="P2PSim.rds")
+total.pathway.net <- read.delim("C:/Code/IntegratedPTMOmics/data/total.pathway.net.txt")
+pathway.crosstalk.network<- read.delim("C:/Code/IntegratedPTMOmics/data/pathway.crosstalk.network.txt")
+####################################3
+# Normalize: put two weights on same scale to make Weight.clust from 0 to 1
+tpnn <- total.pathway.net[,c(1:4,6,5)]
+tpnn$Weight.clust <- tpnn$Weight.clust/max(tpnn$Weight.clust)
+tpnn$Weight.normalized <- tpnn$Weight.clust - tpnn$Weight.bp
+tpnn$Combined.Weight <- tpnn$Weight.clust + tpnn$Weight.bp
+tpnn.no.bp <- tpnn[which(tpnn$Weight.bp==0), c(1,2,5,6)]
+names(tpnn.no.bp)[3:4] <- c("Weight", "interaction")
+#
+# Do pathway.crosstalk.network
+pcnn <- pathway.crosstalk.network
+dim(pcnn[which(pcnn$interaction=="cluster evidence"),]) #645709 okay, same as total.pathway.net, tpnn
+pcnn.clust <- pcnn[which(pcnn$interaction=="cluster evidence"),]
+pcnn.clust$Weight <- pcnn.clust$Weight/max(pcnn.clust$Weight)
+pcnn.bp <- pcnn[which(pcnn$interaction=="pathway Jaccard similarity"),]
+pcnn <- rbind(pcnn.clust, pcnn.bp)
+#
+
+####################################
+
+total.pathway.net$CoWei<-tpnn$Combined.Weight
+
+
+
+data2<-merge(dataAll,total.pathway.net, by.x = c("pw1","pw2"), 
+      by.y = c("source","target"), all.x = TRUE, all.y = TRUE)
+
+corRes<-cor(data2[,c("GoBio", "CoWei", 
+                  "GoCel","InPro","GoMol")])
+data <- as.matrix((corRes))
+
+# Default Heatmap
+heatmap(data) 
+install.packages("gplots")
+library("gplots")
+
+
+# heatmap with the defaults parameters
+colors = c(seq(-3,-2,length=100),seq(-2,0.5,length=100),seq(0.5,6,length=100))
+
+my_palette <- colorRampPalette(c("lightblue", "blue", "red"))(n = 299)
+heatmap.2(x=data,trace="none",col=my_palette)
